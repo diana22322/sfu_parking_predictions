@@ -15,10 +15,10 @@ based on typical campus usage behavior and domain knowledge.
 """
 
 OUTPUT_DIR = 'historic_sfu_parking_logs'
-STUDENT_COUNT = 15000       # Unique student ID's to simulate
+STUDENT_COUNT = 25000       # Unique student ID's to simulate
 
 # Define today's date (the point where data generation must stop)
-TODAY = date(2025, 10, 27)
+TODAY = date(2025, 11, 6)
 OFF_DAY_FRACTION = 0.12 # ~12% of activate students show up on the weekends too
 
 # List of stat holidays affecting campus activities/parking
@@ -43,11 +43,29 @@ SPECIAL_DAYS = [
 
 SPECIAL_DAYS_DT = {pd.to_datetime(d).date() for d in SPECIAL_DAYS}
 
-# Lot configurations and capacity
-LOT_CAPACITY = {'North' : 1000, 'East' : 800, 'Central' : 600, 'West' : 500, 'South' : 400}
-# weighted preference for lots (North/East are busier)
-LOT_WEIGHTS =[0.35, 0.30, 0.15, 0.10, 0.10]
-LOT_NAMES = list(LOT_CAPACITY.keys())
+BURNABY_LOTS = {
+    'North' : 1000, 'East' : 800, 'Central' : 600, 'West' : 500, 'South' : 400
+}
+BURNABY_WEIGHTS = [0.35, 0.30, 0.15, 0.10, 0.10]
+
+# --- NEW SURREY CAMPUS CONFIG ---
+SURREY_LOTS = {
+    'SRYC' : 350,  # Central City - Level P3
+    'SRYE' : 250   # Underground Parkade
+}
+# Surrey lot preference (SRYC likely gets more traffic due to location)
+SURREY_WEIGHTS = [0.60, 0.40]
+
+# --- COMBINED LOT AND CAMPUS DATA STRUCTURE ---
+CAMPUS_LOTS = {
+    'Burnaby': {'lots': BURNABY_LOTS, 'weights': BURNABY_WEIGHTS, 'max_students': int(STUDENT_COUNT * 0.85)},
+    'Surrey': {'lots': SURREY_LOTS, 'weights': SURREY_WEIGHTS, 'max_students': int(STUDENT_COUNT * 0.15)} # Assume ~15% of students primarily use Surrey
+}
+
+# extract names for simpler access later
+BURNABY_LOT_NAMES = list(BURNABY_LOTS.keys())
+SURREY_LOT_NAMES = list(SURREY_LOTS.keys())
+
 
 # Semester definitions (start, end, exam boundaries)
 # two-week exam period at the end of the semester
@@ -68,9 +86,20 @@ def generate_synthetic_schedule(start_date, end_date):
     # define common class times
     class_times = [time(h, m) for h in range(8,17) for m in [30]]
 
-    # sample 85% of students to represent active parkers
-    # Student id's starting at 10000
-    active_students = pd.Series(range(10000, STUDENT_COUNT + 10000)).sample(frac=0.85, replace=False)
+    # sample active students and assign a primary campus
+    student_ids = pd.Series(range(10000, STUDENT_COUNT + 10000))
+
+    # active students for burnaby campus ~85%
+    burnaby_students = student_ids.sample(n=CAMPUS_LOTS['Burnaby']['max_students'], replace=False).tolist()
+
+    # active students for surrey campus ~15%
+    surrey_students = student_ids[~student_ids.isin(burnaby_students)]\
+        .sample(n=CAMPUS_LOTS['Surrey']['max_students'], replace=False).tolist()
+
+    # create mapping of students to campus
+    campus_map = {sid: 'Burnaby' for sid in burnaby_students}
+    campus_map.update({sid: 'Surrey' for sid in surrey_students})
+    active_students = surrey_students + burnaby_students
 
     schedule_data = []
 
@@ -91,6 +120,7 @@ def generate_synthetic_schedule(start_date, end_date):
 
             schedule_data.append({
                 'student_id': student_id,
+                'campus': campus_map[student_id],
                 'day': day,
                 'start_time': time_obj,
                 'end_time': end.time()
@@ -147,7 +177,7 @@ def simulate_events(schedule_df, current_period, student_frac=1.0):
 
     # find the earliest class and last class for each student on this day
     # to anticipate their arrival and departure time
-    daily_summary = schedule_df.groupby(['student_id', 'date']).agg(
+    daily_summary = schedule_df.groupby(['student_id', 'date', 'campus']).agg(
         first_start =('start_time', 'min'),
         last_end =('end_time', 'max')
     ).reset_index()
@@ -209,7 +239,17 @@ def simulate_events(schedule_df, current_period, student_frac=1.0):
         else:
             departure_time_cap = departure_time
 
-        assigned_lot = np.random.choice(LOT_NAMES, p=LOT_WEIGHTS)
+        current_campus = row['campus']
+        if current_campus == 'Burnaby':
+            lot_names = BURNABY_LOT_NAMES
+            lot_weights = BURNABY_WEIGHTS
+        elif current_campus == 'Surrey':
+            lot_names = SURREY_LOT_NAMES
+            lot_weights = SURREY_WEIGHTS
+        else:
+            continue
+
+        assigned_lot = np.random.choice(lot_names, p=lot_weights)
 
         # append arrival event
         events.append({
@@ -218,6 +258,7 @@ def simulate_events(schedule_df, current_period, student_frac=1.0):
             'lot_id': assigned_lot,
             'event_type': 'ARRIVAL',
             'student_id': row['student_id'],
+            'campus': current_campus,
             'isHoliday': row['isHoliday'],
             'isWeekend': row['isWeekend'],
             'isExamWeek': row['isExamWeek'],
@@ -233,6 +274,7 @@ def simulate_events(schedule_df, current_period, student_frac=1.0):
                 'lot_id': assigned_lot,
                 'event_type': 'DEPARTURE',
                 'student_id': row['student_id'],
+                'campus': current_campus,
                 'isHoliday': row['isHoliday'],
                 'isWeekend': row['isWeekend'],
                 'isExamWeek': row['isExamWeek'],
