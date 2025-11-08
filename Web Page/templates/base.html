@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en"> <!-- Page is in ENGLISH -->
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}SFU Parking{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+</head>
+<body>
+    <div class="header-divider" aria-hidden="true"></div> <!-- THIN horizontal line dividing the menu (decorative only) -->
+    
+    <!-- UPPER navigation bar -->
+    <nav class="main-navigation" role="navigation" aria-label="Main">
+        <a href="{{ url_for('home') }}" class="nav-link{% if request.path=='/' %} active{% endif %}">HOME</a>
+        <a href="{{ url_for('burnaby') }}" class="nav-link{% if '/burnaby' in request.path %} active{% endif %}">BURNABY CAMPUS</a>
+        <a href="{{ url_for('surrey') }}" class="nav-link{% if '/surrey' in request.path %} active{% endif %}">SURREY CAMPUS</a>
+        <a href="{{ url_for('log_event') }}" class="nav-link{% if '/log_event' in request.path %} active{% endif %}">LOG EVENT</a>
+    </nav>
+
+{% block content %}{% endblock %}
+
+<!-- loading front-end logic -->
+<script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
+</html>

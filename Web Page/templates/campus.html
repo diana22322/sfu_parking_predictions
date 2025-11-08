@@ -1,0 +1,72 @@
+{% extends 'base.html' %}
+{% block title %}{{ campus_name }} – SFU Parking{% endblock %}
+{% block content %}
+<section class="lot-hero" style="background-color: {{ accent }}; --campus: {{ accent }};">
+  <div class="lot-picker" data-campus="{{ campus_key }}">
+    <h2 class="lot-title" id="selected-lot" role="button" tabindex="0"
+        aria-haspopup="listbox" aria-expanded="false" aria-controls="lot-menu">
+      <span class="lot-name">Loading…</span>
+      <span class="lot-arrow" aria-hidden="true">▾</span>
+    </h2>
+
+    <div class="cards-row">
+      <!-- Donut stats -->
+      <div class="stat-card">
+        <div class="stat-judgement" id="judgement">—</div>
+        <div class="donut-wrap">
+          <svg class="donut" viewBox="0 0 100 100" aria-label="Occupancy donut" role="img">
+            <circle class="donut-track" cx="50" cy="50" r="40"></circle>
+            <circle class="donut-free"  cx="50" cy="50" r="40"></circle>
+            <circle class="donut-occ"   cx="50" cy="50" r="40"></circle>
+          </svg>
+          <div class="donut-center">
+            <div class="donut-total" id="donut-total" aria-live="polite">0</div>
+            <div class="donut-center-sub">Total</div>
+          </div>
+        </div>
+        <div class="stat-available">
+          <span id="available" aria-live="polite">0</span> Available
+        </div>
+      </div>
+
+      <!-- Lot Occupancy chart -->
+      <div class="chart-card">
+        <div class="chart-title">Lot Occupancy</div>
+        <svg id="occ-chart" class="chart-svg" viewBox="0 0 320 200" role="img" aria-label="Occupancy over time"></svg>
+
+        <div class="metrics">
+          <div>
+            <small>Average duration</small>
+            <div class="value" id="avg-duration">—</div>
+          </div>
+          <div>
+            <small>Average occupancy</small>
+            <div class="value" id="avg-occ">—</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Recent Activity table -->
+    <div class="table-card">
+        <div class="chart-title">Recent Activity</div>
+        <table class="activity-table" id="activity-table" aria-label="Recent activity">
+        <thead>
+            <tr>
+                <th scope="col">Date</th>
+                <th scope="col">Time</th>
+                <th scope="col">Event</th>
+            </tr>
+        </thead>
+    <tbody></tbody>
+        </table>
+    </div>
+      
+    </div>
+
+    <!-- Dropdown menu -->
+    <ul class="lot-menu" id="lot-menu" role="listbox" aria-label="Select lot" aria-labelledby="selected-lot"></ul>
+    <p id="lot-error" class="status" role="status" aria-live="polite" style="margin-top:8px;"></p>
+  </div>
+</section>
+
+{% endblock %}

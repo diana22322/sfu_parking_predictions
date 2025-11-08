@@ -1,0 +1,28 @@
+{% extends 'base.html' %} <!-- Enhance from base.html -->
+{% block title %}Log Event – SFU Parking{% endblock %}
+{% block content %}
+<section class="form-shell">
+    <h2 class="form-title">Log Parking Event</h2>
+    <form id="logForm" class="log-form">
+        <label>
+            Campus
+            <select name="campus" required>
+                <option value="burnaby">Burnaby</option>
+                <option value="surrey">Surrey</option>
+            </select>
+        </label>
+        <label>
+            Lot Name
+            <input name="lot" placeholder="e.g., West Parkade" required />
+        </label>
+        <label>
+            Change Type
+            <select name="type" required>
+                <option value="entry">Entry (+1 occupied)</option>
+                <option value="exit">Exit (−1 occupied)</option>
+            </select>
+        </label>
+        <button type="submit">Submit</button>
+        <p id="logStatus" class="status" role="status" aria-live="polite"></p>
+    </form>
+</section>
