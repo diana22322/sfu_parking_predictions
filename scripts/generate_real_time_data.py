@@ -12,19 +12,29 @@ API_KEY  = ""
 LOT_CONFIG = {
     'BURNABY': {
         'lots': ['NORTH', 'EAST', 'CENTRAL', 'WEST', 'SOUTH'],
-        'capacity': {'NORTH': 1000, 'EAST': 800, 'CENTRAL': 600, 'WEST': 500, 'SOUTH': 400},
-        'traffic_weight': 0.75, # 75% of total events for this campus
+        'capacity': {'NORTH': 2000, 'EAST': 1500, 'CENTRAL': 600, 'WEST': 500, 'SOUTH': 400},
+        'traffic_weight': 0.90, # 90% of total events for this campus
         'min_duration_min': 90,
         'max_duration_min': 360,
     },
     'SURREY': {
         'lots': ['SRYC', 'SRYE'],
-        'capacity': {'SRYC': 350, 'SRYE': 250},
-        'traffic_weight': 0.25,
+        'capacity': {'SRYC': 450, 'SRYE': 450},
+        'traffic_weight': 0.10,
         'min_duration_min': 60,
         'max_duration_min': 240,
     }
 }
+
+
+# Create a flat dictionary to track occupancy for all lots
+# e.g. {'NORTH': 0, 'EAST': 0, .....}
+LOT_OCCUPANCY = {
+    lot: 0
+    for campus_cfg in LOT_CONFIG.values()
+    for lot in campus_cfg['capacity'].keys()
+}
+
 
 # average delay between events (e.g. 10.0s = 1 event every 10 seconds)
 EVENT_INTERVAL_SECONDS = 10.0
@@ -37,7 +47,7 @@ ACTIVE_HOUR_END = 23
 ARRIVAL_PEAK_HOUR_END = 11
 
 # Unique IDs to simulate
-STUDENT_COUNT = 15000
+STUDENT_COUNT = 18000
 STUDENT_IDS = [f"{i+10000}" for i in range(STUDENT_COUNT)]
 
 # map plate number for each student
@@ -60,9 +70,29 @@ def generate_arrival_event():
                                  k=1)[0]
     config = LOT_CONFIG[campus_name]
 
-    # select lot
-    lot_id = random.choice(config['lots'])
+    # try preferred lot
+    preferred_lot = random.choice(config['lots'])
+    assigned_lot = None
 
+    # check preferred lot first
+    if LOT_OCCUPANCY[preferred_lot] < config['capacity'][preferred_lot]:
+        assigned_lot = preferred_lot
+    else:
+        # preferred lot is full, try other lots on the same campus
+        other_lots = [lot for lot in config['lots'] if lot != preferred_lot]
+        random.shuffle(other_lots)
+
+        for lot in other_lots:
+            if LOT_OCCUPANCY[lot] < config['capacity'][lot]:
+                assigned_lot = lot
+                break # found a spot
+
+    if assigned_lot is None:
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] REJECTED | CAMPUS: {campus_name} | "
+              f"All lots full. | ACTIVE Sessions: {len(ACTIVE_SESSIONS)}")
+        return None
+
+    # spot found -> proceed with event generation
     # select student (ensure that they are not currently parked)
     available_students = [sid for sid in STUDENT_IDS if sid not in ACTIVE_SESSIONS]
     if not available_students:
@@ -77,10 +107,13 @@ def generate_arrival_event():
     departure_time = event_time + timedelta(minutes=duration)
     session_id = str(uuid.uuid4())
 
+    # update occupancy
+    LOT_OCCUPANCY[assigned_lot] += 1
+
     # store session in active sessions -- needed for departure event
     ACTIVE_SESSIONS[student_id] = {
         'session_id': session_id,
-        'lot_id': lot_id,
+        'lot_id': assigned_lot,
         'campus': campus_name,
         'expected_departure': departure_time,
         'plate_number': plate_number
@@ -90,7 +123,7 @@ def generate_arrival_event():
         "session_id": session_id,
         "timestamp": event_time.isoformat() + 'Z',
         "event_type": "ARRIVAL",
-        "lot_id": lot_id,
+        "lot_id": assigned_lot,
         "campus": campus_name,
         "student_id": student_id,
         "plate_number": plate_number,
@@ -115,6 +148,12 @@ def generate_departure_event():
     student_id, session = eligibile_departures[0]
     plate_number = session['plate_number']
 
+    departing_lot = session['lot_id']
+
+    LOT_OCCUPANCY[departing_lot] -= 1
+    if LOT_OCCUPANCY[departing_lot] < 0:
+        LOT_OCCUPANCY[departing_lot] = 0
+
     # remove from active sessions
     del ACTIVE_SESSIONS[student_id]
 
@@ -135,7 +174,7 @@ def send_event_to_api(event_payload):
 
     headers = {
         'Content-type': 'application/json',
-        'x-api-key': API_KEY # check this later -- if using API key
+        'x-api-key': API_KEY # maybe useful later -- if using API key
     }
 
     try:
@@ -144,15 +183,37 @@ def send_event_to_api(event_payload):
 
         event_type = event_payload['event_type']
         lot_id = event_payload['lot_id']
+        campus = event_payload['campus']
         session_count = len(ACTIVE_SESSIONS)
+        lot_cap = LOT_CONFIG[campus]['capacity'][lot_id]
+        lot_occ = LOT_OCCUPANCY[lot_id]
 
         print(
-            f"[{datetime.now().strftime('%H:%M:%S')}] SENT {event_type} | Lot: {lot_id} | Plate: {event_payload.get('plate_number')} | Active Sessions: {session_count}")
+            f"[{datetime.now().strftime('%H:%M:%S')}] SENT {event_type} | Lot: {lot_id} ({lot_occ}/{lot_cap}) | "
+            f"Plate: {event_payload.get('plate_number')} | Active Sessions: {session_count}")
         return True
 
     except requests.exceptions.RequestException as e:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] FAILED to send event to API Gateway: {e}")
         print(f"Payload: {event_payload}")
+
+        # rollback occupancy on failure
+        # un-park them, if the arrival event failed
+        if event_payload['event_type'] == 'ARRIVAL':
+            student_id = event_payload['student_id']
+            if student_id in ACTIVE_SESSIONS:
+                # remove from active session
+                del ACTIVE_SESSIONS[student_id]
+                # decrement occupancy
+                lot_id = event_payload['lot_id']
+                LOT_OCCUPANCY[lot_id] -= 1
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ROLLBACK: Removed {student_id} from {lot_id} due to API failure.")
+
+        # if departure failed
+        elif event_payload['event_type'] == 'DEPARTURE':
+            # just logging the error as main risk is ARRIVAL failue
+            pass
+
         return False
 
 def run_simulation():
@@ -161,6 +222,7 @@ def run_simulation():
     print(f"Event Interval: {EVENT_INTERVAL_SECONDS}s")
     print(f"Active Window: {ACTIVE_HOUR_START:02d}:00 to {ACTIVE_HOUR_END:02d}:59")
     print(f"Total Student IDs: {len(STUDENT_IDS)}")
+    print(f"Initial Occupancy: {LOT_OCCUPANCY}")
     print("------------------------------------------------")
 
     # check if API URL is set
@@ -217,3 +279,4 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("Simulation stopped by user")
         print(f"Final Active Sessions: {len(ACTIVE_SESSIONS)}")
+        print(f"Final Lot Occupancy: {LOT_OCCUPANCY}")

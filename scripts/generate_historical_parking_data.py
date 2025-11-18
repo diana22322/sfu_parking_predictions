@@ -15,14 +15,16 @@ based on typical campus usage behavior and domain knowledge.
 """
 
 OUTPUT_DIR = 'raw/historical'
-STUDENT_COUNT = 25000       # Unique student ID's to simulate
+STUDENT_COUNT = 20000       # Unique student ID's to simulate
 
 # Define today's date (the point where data generation must stop)
-TODAY = date(2025, 11, 13)
+TODAY = date(2025, 11, 17)
 OFF_DAY_FRACTION = 0.12 # ~12% of activate students show up on the weekends too
 
 # List of stat holidays affecting campus activities/parking
 STAT_HOLIDAYS = [
+    '2022-02-21', '2022-04-15',
+    '2022-10-10', '2022-11-11',
     '2023-10-09', '2023-11-13',
     '2024-02-12', '2024-03-29',
     '2024-10-14', '2024-11-11',
@@ -34,6 +36,8 @@ HOLIDAYS_DT = {pd.to_datetime(d).date() for d in STAT_HOLIDAYS}
 
 # Dates for major, non-class events that affect parking (e.g. Convocation)
 SPECIAL_DAYS = [
+    '2022-06-07', '2022-06-10',
+    '2022-10-06', '2022-10-07',
     '2023-10-05', '2023-10-06',
     '2024-06-11', '2024-06-14',
     '2024-10-03', '2024-10-04',
@@ -44,22 +48,22 @@ SPECIAL_DAYS = [
 SPECIAL_DAYS_DT = {pd.to_datetime(d).date() for d in SPECIAL_DAYS}
 
 BURNABY_LOTS = {
-    'North' : 1000, 'East' : 800, 'Central' : 600, 'West' : 500, 'South' : 400
+    'North' : 2000, 'East' : 1500, 'Central' : 600, 'West' : 500, 'South' : 400
 }
 BURNABY_WEIGHTS = [0.35, 0.30, 0.15, 0.10, 0.10]
 
 # --- NEW SURREY CAMPUS CONFIG ---
 SURREY_LOTS = {
-    'SRYC' : 350,  # Central City - Level P3
-    'SRYE' : 250   # Underground Parkade
+    'SRYC' : 450,  # Central City - Level P3
+    'SRYE' : 450   # Underground Parkade
 }
 # Surrey lot preference (SRYC likely gets more traffic due to location)
 SURREY_WEIGHTS = [0.60, 0.40]
 
 # --- COMBINED LOT AND CAMPUS DATA STRUCTURE ---
 CAMPUS_LOTS = {
-    'Burnaby': {'lots': BURNABY_LOTS, 'weights': BURNABY_WEIGHTS, 'max_students': int(STUDENT_COUNT * 0.85)},
-    'Surrey': {'lots': SURREY_LOTS, 'weights': SURREY_WEIGHTS, 'max_students': int(STUDENT_COUNT * 0.15)} # Assume ~15% of students primarily use Surrey
+    'Burnaby': {'lots': BURNABY_LOTS, 'weights': BURNABY_WEIGHTS, 'max_students': int(STUDENT_COUNT * 0.90)},
+    'Surrey': {'lots': SURREY_LOTS, 'weights': SURREY_WEIGHTS, 'max_students': int(STUDENT_COUNT * 0.10)} # Assume ~10% of students primarily use Surrey
 }
 
 # extract names for simpler access later
@@ -70,6 +74,9 @@ SURREY_LOT_NAMES = list(SURREY_LOTS.keys())
 # Semester definitions (start, end, exam boundaries)
 # two-week exam period at the end of the semester
 SEMESTERS = [
+    {'name': 'Spring 2022', 'start': '2022-01-10', 'class_end': '2022-04-11', 'sem_end': '2022-04-26'},
+    {'name': 'Fall 2022', 'start': '2022-09-07', 'class_end': '2022-12-06', 'sem_end': '2022-12-19'},
+    {'name': 'Spring 2023', 'start': '2023-01-04', 'class_end': '2023-04-11', 'sem_end': '2023-04-24'},
     {'name': 'Fall 2023', 'start': '2023-09-05', 'class_end': '2023-12-08', 'sem_end': '2023-12-22'},
     {'name': 'Spring 2024', 'start': '2024-01-08', 'class_end': '2024-04-12', 'sem_end': '2024-04-26'},
     {'name': 'Fall 2024', 'start': '2024-09-03', 'class_end': '2024-12-06', 'sem_end': '2024-12-20'},
@@ -162,7 +169,7 @@ def simulate_events(schedule_df, current_period, student_frac=1.0):
     is_exam_period = current_period == 'exam'
     is_off_day = current_period == 'off_day'
 
-    # Define the observed worst peak window for arrival (11:15 AM to 12:30 PM)
+    # Define the observed worst peak window for arrival (10:30 AM to 12:30 PM)
     PEAK_START = time(10, 30)
     PEAK_END = time(12, 30)
 
@@ -222,7 +229,7 @@ def simulate_events(schedule_df, current_period, student_frac=1.0):
         arrival_time = start_dt - timedelta(minutes=arrival_buffer)
 
         # ---- departure time calculation ----
-        departure_buffer = np.random.uniform(60, 180) # default 1-3 hours
+        departure_buffer = np.random.uniform(15, 180) # default 15 min -3 hours after last class ends
         end_dt = pd.to_datetime(str(row['date']) + ' ' + str(row['last_end'])) # default end anchor
 
         # adjust buffer
@@ -240,22 +247,11 @@ def simulate_events(schedule_df, current_period, student_frac=1.0):
             departure_time_cap = departure_time
 
         current_campus = row['campus']
-        if current_campus == 'Burnaby':
-            lot_names = BURNABY_LOT_NAMES
-            lot_weights = BURNABY_WEIGHTS
-        elif current_campus == 'Surrey':
-            lot_names = SURREY_LOT_NAMES
-            lot_weights = SURREY_WEIGHTS
-        else:
-            continue
-
-        assigned_lot = np.random.choice(lot_names, p=lot_weights)
 
         # append arrival event
         events.append({
             'session_id': session_id,
             'timestamp': arrival_time,
-            'lot_id': assigned_lot,
             'event_type': 'ARRIVAL',
             'student_id': row['student_id'],
             'campus': current_campus,
@@ -271,7 +267,6 @@ def simulate_events(schedule_df, current_period, student_frac=1.0):
             events.append({
                 'session_id': session_id,
                 'timestamp': departure_time_cap,
-                'lot_id': assigned_lot,
                 'event_type': 'DEPARTURE',
                 'student_id': row['student_id'],
                 'campus': current_campus,
@@ -284,7 +279,107 @@ def simulate_events(schedule_df, current_period, student_frac=1.0):
 
     return pd.DataFrame(events)
 
-    # Execution
+
+def assign_lots_with_capacity(events_df):
+    """
+    processes a chronologically sorted df of events and assigns lots based on
+    real-time availability
+    """
+    print("Assigning lots with capacity simulation...")
+
+    # initialize capacity and trackers
+    all_lot_capacities = {**BURNABY_LOTS, **SURREY_LOTS}
+    lot_occupancy = {lot: 0 for lot in all_lot_capacities.keys()}
+
+    # stores {session_id: assigned_lot} for active parkers
+    active_sessions = {}
+
+    # tracks sessions that failed to park (all lots full)
+    rejected_session_ids = set()
+
+    # store the new processed rows
+    processed_events = []
+
+    # iterate through all events
+    for row in events_df.itertuples(index=False):
+        session_id = row.session_id
+        event_type = row.event_type
+        campus = row.campus
+
+        # if this session was already rejected, skip its departure too
+        if session_id in rejected_session_ids:
+            continue
+
+        if event_type == 'DEPARTURE':
+            # get the lot this session was in
+            assigned_lot = active_sessions.pop(session_id, None)
+
+            if assigned_lot:
+                # free up the spot in this lot
+                lot_occupancy[assigned_lot] -= 1
+                if lot_occupancy[assigned_lot] < 0:
+                    lot_occupancy[assigned_lot] = 0
+
+                # add lot_id to event and store it
+                event_data = row._asdict()
+                event_data['lot_id'] = assigned_lot
+                processed_events.append(event_data)
+            # else - this departure has no matching arrival (it was rejected), so we just drop it
+
+        elif event_type == 'ARRIVAL':
+            # get campus specific lot info
+            if campus == 'Burnaby':
+                campus_lots = BURNABY_LOT_NAMES
+                campus_weights = BURNABY_WEIGHTS
+            elif campus == 'Surrey':
+                campus_lots = SURREY_LOT_NAMES
+                campus_weights = SURREY_WEIGHTS
+            else:
+                continue # unknown campus
+
+            # try to find a lot
+            preferred_lot = np.random.choice(campus_lots, p=campus_weights)
+            assigned_lot = None
+
+            # try preferred lot first
+            if lot_occupancy[preferred_lot] < all_lot_capacities[preferred_lot]:
+                assigned_lot = preferred_lot
+            else:
+                # try other lots on campus
+                other_lots = [lot for lot in campus_lots if lot != preferred_lot]
+                np.random.shuffle(other_lots)
+
+                for lot in other_lots:
+                    if lot_occupancy[lot] < all_lot_capacities[lot]:
+                        assigned_lot = lot
+                        break # found a spot
+
+            if assigned_lot:
+                # success -> assign spot, track session, update occupancy
+                lot_occupancy[assigned_lot] += 1
+                active_sessions[session_id] = assigned_lot
+
+                # add lot_id to event and store it
+                event_data = row._asdict()
+                event_data['lot_id'] = assigned_lot
+                processed_events.append(event_data)
+            else:
+                # failure -> all campus lots are full, reject this session
+                rejected_session_ids.add(session_id)
+
+    print(f"Simulation complete. Rejected {len(rejected_session_ids)} total sessions (no lots available)")
+
+    final_df = pd.DataFrame(processed_events)
+
+    # re-ordering the columns
+    if not final_df.empty:
+        cols = ['session_id', 'timestamp', 'lot_id', 'event_type', 'student_id', 'campus']
+        # add flags if they exist
+        cols.extend([c for c in final_df.columns if c.startswith('is')])
+        final_df = final_df[cols]
+
+    return final_df
+
 
 def generate_synthetic_parking_data():
     """
@@ -310,7 +405,7 @@ def generate_synthetic_parking_data():
         class_end = pd.to_datetime(term['class_end']).date()
         sem_end = pd.to_datetime(term['sem_end']).date()
 
-        # filter current term from the base schedule (consisting of 2 years schedule)
+        # filter current term from the base schedule (consisting of 3 years schedule)
         term_dates = pd.date_range(start=term_start, end=sem_end, freq='D').date
         term_schedule = base_schedule_df[base_schedule_df['date'].isin(term_dates)].copy()
 
@@ -347,9 +442,13 @@ def generate_synthetic_parking_data():
         # filter the final combined data for the semester up to TODAY's date
         term_events = term_events[term_events['timestamp'].dt.date <= TODAY]
 
+        # re-process the events and assign lots based on capacity
+        # drop sesssion that can't park
+        term_events_final = assign_lots_with_capacity(term_events)
+
         filename = os.path.join(OUTPUT_DIR, f"sfu_parking_logs_{term['name'].replace(' ', '_')}.csv")
-        term_events.to_csv(filename, index=False)
-        print(f"Successfully saved {len(term_events)} events for {term['name']} (up to {TODAY}) to {filename}")
+        term_events_final.to_csv(filename, index=False)
+        print(f"Successfully saved {len(term_events_final)} events for {term['name']} (up to {TODAY}) to {filename}")
 
     print("\nData generation complete. Ready for Spark/Parquet conversion.")
 

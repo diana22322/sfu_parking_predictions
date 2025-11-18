@@ -19,8 +19,8 @@ DB_NAME = os.environ.get('DB_NAME')
 
 # lot capacity lookup
 LOT_CAPACITIES = {
-    'BURNABY': {'NORTH': 1000, 'EAST': 800, 'CENTRAL': 600, 'WEST': 500, 'SOUTH': 400},
-    'SURREY': {'SRYC': 350, 'SRYE': 250}
+    'BURNABY': {'NORTH': 2000, 'EAST': 1500, 'CENTRAL': 600, 'WEST': 500, 'SOUTH': 400},
+    'SURREY': {'SRYC': 450, 'SRYE': 450}
 }
 
 FLAT_CAPACITIES = {
@@ -41,8 +41,9 @@ def get_db_connection():
         connect_timeout=5
     )
 
-def process_event(event_data: dict, conn) -> None:
-    # calculates the occupancy change and executes the atomic update in the database
+def process_event(event_data: dict, cur) -> None:
+    # calculates the occupancy change and executes the atomic update using the provided cursor
+    # doesn't COMMIT transaction -- will do batch COMMITS later
 
     lot_id = event_data['lot_id']
     campus = event_data['campus']
@@ -58,74 +59,109 @@ def process_event(event_data: dict, conn) -> None:
         print(f"Warning: Unknown lot ID {lot_id}. Skipping update")
         return
 
-    initial_free_spots = capacity - occupancy_change
-    initial_rate = round(occupancy_change / capacity, 4) if capacity > 0 else 0
-
-
+    # INSERT logic uses GREATEST() to prevent inserting -1 for a new lot
+    # UPDATE logic passes the raw `occupancy change` again to ensure atomic addition/subtraction, clamped b/w 0 and cap
     sql_query = sql.SQL("""
             INSERT INTO current_lot_occupancy 
                 (lot_id, campus_name, capacity, current_occupancy, free_spots, occupancy_rate, last_updated_ts)
             VALUES 
                 (
-                    %s, %s, %s, %s, %s, %s, %s
+                    %s,  -- lot_id
+                    %s,  -- campus
+                    %s,  -- capacity
+                    GREATEST(0, %s), -- INSERT: current_occupancy (e.g., GREATEST(0, -1) -> 0)
+                    %s - GREATEST(0, %s), -- INSERT: free_spots
+                    GREATEST(0, %s)::NUMERIC / %s, -- INSERT: occupancy_rate
+                    %s  -- last_updated_ts
                 )
             ON CONFLICT (lot_id) DO UPDATE SET
-                current_occupancy = current_lot_occupancy.current_occupancy + EXCLUDED.current_occupancy,
-                free_spots = current_lot_occupancy.capacity - (current_lot_occupancy.current_occupancy + EXCLUDED.current_occupancy),
-                occupancy_rate = (current_lot_occupancy.current_occupancy + EXCLUDED.current_occupancy)::NUMERIC / current_lot_occupancy.capacity,
+                -- UPDATE: uses the raw occupancy_change (param 10, 11, 12)
+                -- this prevents current occupancy from being less than 0 or greater than capacity
+                current_occupancy = GREATEST(0, LEAST(current_lot_occupancy.capacity, current_lot_occupancy.current_occupancy + %s)),
+
+                free_spots = current_lot_occupancy.capacity - 
+                    GREATEST(0, LEAST(current_lot_occupancy.capacity, current_lot_occupancy.current_occupancy + %s)),
+
+                occupancy_rate = (GREATEST(0, LEAST(current_lot_occupancy.capacity, current_lot_occupancy.current_occupancy + %s))::NUMERIC / current_lot_occupancy.capacity),
+
                 last_updated_ts = EXCLUDED.last_updated_ts
         """)
 
-    # The EXCLUDED.current_occupancy here is just the single event's change (+1 or -1)
-    # database handles the math atomically: current_value + (+1 or -1)
+    # query has 12 parameters to safely handle both INSERT and UPDATE logic
+    cur.execute(sql_query, (
+        lot_id,
+        campus,
+        capacity,
 
-    with conn.cursor() as cur:
-        cur.execute(sql_query, (
-            lot_id,
-            campus,
-            capacity,
-            occupancy_change,     # For INSERT: current_occupancy
-            initial_free_spots,
-            initial_rate,
-            timestamp
-        ))
-    conn.commit()
-    print(f"SUCCESS: {event_type} event processed for {lot_id}. Change: {occupancy_change}.")
+        # Parameters for INSERT (VALUES) clause
+        occupancy_change,  # param 4: for current_occupancy
+        capacity,  # param 5: for free_spots
+        occupancy_change,  # param 6: for free_spots
+        occupancy_change,  # param 7: for occupancy_rate
+        capacity,  # param 8: for occupancy_rate
+        timestamp,  # param 9: for last_updated_ts
+
+        # Parameters for UPDATE (ON CONFLICT) clause
+        occupancy_change,  # param 10: for current_occupancy update
+        occupancy_change,  # param 11: for free_spots update
+        occupancy_change  # param 12: for occupancy_rate update
+    ))
+
+    # not commiting here
+    print(f"SUCCESS (in batch): {event_type} event queued for {lot_id}.")
 
 def lambda_handler(kinesis_event, context):
     # Kinesis stream processor function. Reads records and updates PostgreSQL
     logger.info("psycopg2 loaded from: %s", psycopg2.__file__)
     records_processed = 0
+    failed_sequence_numbers = []  # For per-record retries
+    conn = None
+    
     try:
         conn = get_db_connection()
-        # process records from the Kinesis batch
-        for record in kinesis_event['Records']:
-            try:
-                # kinesis data is base64 encoded
-                payload = base64.b64decode(record['kinesis']['data']).decode('utf-8')
-                event_data = json.loads(payload)
 
-                # process the individual event
-                process_event(event_data, conn)
+        # Batch Commit Logic:
+        with conn.cursor() as cur:
 
-                records_processed += 1
+            # process records from the Kinesis batch
+            for record in kinesis_event['Records']:
+                sequence_number = record['kinesis']['sequenceNumber']
+                try:
+                    # kinesis data is base64 encoded
+                    payload = base64.b64decode(record['kinesis']['data']).decode('utf-8')
+                    event_data = json.loads(payload)
 
-            except Exception as e:
-                print(f"Error processing single record: {e} | Record: {record.get('kinesis', {}).get('data')}")
+                    # Batch commit ---- pass cursor to processing function
+                    process_event(event_data, cur)
+                    records_processed += 1
+
+                except Exception as e:
+                    print(f"Error processing single record: {e} | Record: {record.get('kinesis', {}).get('data')}")
+                    failed_sequence_numbers.append(sequence_number)
+
+            # Commit the entire batch at once ---
+            conn.commit()
+            logger.info(f"Batch commit successful. Processed: {records_processed}, Failed: {len(failed_sequence_numbers)}")
 
     except EnvironmentError as e:
+        logger.fatal(f"FATAL: Configuration error. {e}")
         print(f"FATAL: Configuration error. {e}")
         raise
 
     except Exception as e:
-        print(f"FATAL: Database or connection error during batch: {e}")
+        logger.fatal(f"FATAL: Database or batch commit error: {e}", exc_info=True)
+        if conn:
+            conn.rollback()
         raise
 
     finally:
         # ensure connection is closed
-        if 'conn' in locals() and conn:
+        if conn:
             conn.close()
 
     print(f"Batch completed. Total records processed: {records_processed}")
 
-    return f"Successfully processed {records_processed} records."
+    logger.info(f"Batch completed. Total records processed: {records_processed}")
+
+    # Tell Kinesis which specific records to retry
+    return {'batchItemFailures': [{'itemIdentifier': seq} for seq in failed_sequence_numbers]}
