@@ -18,7 +18,7 @@ OUTPUT_DIR = 'raw/historical'
 STUDENT_COUNT = 20000       # Unique student ID's to simulate
 
 # Define today's date (the point where data generation must stop)
-TODAY = date(2025, 11, 17)
+TODAY = date(2025, 11, 20)
 OFF_DAY_FRACTION = 0.12 # ~12% of activate students show up on the weekends too
 
 # List of stat holidays affecting campus activities/parking
@@ -52,12 +52,11 @@ BURNABY_LOTS = {
 }
 BURNABY_WEIGHTS = [0.35, 0.30, 0.15, 0.10, 0.10]
 
-# --- NEW SURREY CAMPUS CONFIG ---
 SURREY_LOTS = {
     'SRYC' : 450,  # Central City - Level P3
     'SRYE' : 450   # Underground Parkade
 }
-# Surrey lot preference (SRYC likely gets more traffic due to location)
+# Surrey lot preference (SRYC likely gets more traffic)
 SURREY_WEIGHTS = [0.60, 0.40]
 
 # --- COMBINED LOT AND CAMPUS DATA STRUCTURE ---
@@ -177,10 +176,13 @@ def simulate_events(schedule_df, current_period, student_frac=1.0):
     # Reduce sample of students for low-demand periods (used for off_day). Only subset of students come to campus on weekends on holidays
     if student_frac < 1.0:
         active_students = schedule_df['student_id'].unique()
-        sample_size = int(len(active_students) * student_frac)
-        schedule_df = schedule_df[schedule_df['student_id'].isin(
-            np.random.choice(active_students, size=sample_size, replace=False)
-        )]
+        if len(active_students) > 0:
+            sample_size = max(1, int(len(active_students) * student_frac))
+            schedule_df = schedule_df[schedule_df['student_id'].isin(
+                np.random.choice(active_students, size=sample_size, replace=False)
+            )]
+        else:
+            return pd.DataFrame(events)
 
     # find the earliest class and last class for each student on this day
     # to anticipate their arrival and departure time
@@ -389,7 +391,7 @@ def generate_synthetic_parking_data():
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
 
-    # generate class schedules for last 2 years
+    # generate class schedules for last 3 years
     base_schedule_df = generate_synthetic_schedule(SEMESTERS[0]['start'], SEMESTERS[-1]['sem_end'])
 
     # add calendar flags to this schedule
@@ -412,7 +414,30 @@ def generate_synthetic_parking_data():
         # weekday/weekend/holiday separation
         active_day_schedule = term_schedule[term_schedule['is_weekday'] & ~term_schedule['is_holiday']].copy()
         off_day_schedule = term_schedule[term_schedule['is_weekend'] | term_schedule['is_holiday']].copy()
-        off_day_schedule = off_day_schedule.drop_duplicates(subset=['date'])
+
+        unique_students = term_schedule[['student_id', 'campus']].drop_duplicates()
+        weekend_dates = [d for d in term_dates if pd.to_datetime(d).weekday() >= 5 and d <= TODAY]
+
+        weekend_rows = []
+        if not unique_students.empty:
+            for d in weekend_dates:
+                for _, srow in unique_students.iterrows():
+                    start_hour = np.random.randint(9, 15)
+                    start_minute = np.random.choice([0, 30])
+                    start_dt = pd.to_datetime(f"{start_hour:02d}:{start_minute:02d}")
+                    end_dt = start_dt + timedelta(hours=2)
+                    weekend_rows.append({
+                        'student_id': srow['student_id'],
+                        'campus': srow['campus'],
+                        'day': '',
+                        'start_time': start_dt.time(),
+                        'end_time': end_dt.time(),
+                        'date': d
+                    })
+
+        if weekend_rows:
+            weekend_schedule_df = pd.DataFrame(weekend_rows)
+            off_day_schedule = pd.concat([off_day_schedule, weekend_schedule_df], ignore_index=True)
 
         # simulation Period Definitions
         busy_end_date = term_start + timedelta(weeks=2)
@@ -456,4 +481,3 @@ def generate_synthetic_parking_data():
 if __name__ == '__main__':
     sys.setrecursionlimit(2000)
     generate_synthetic_parking_data()
-
