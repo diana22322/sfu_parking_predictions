@@ -10,7 +10,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 # Configuration -- Environment variables
-# completed in AWS lambda console
+# these are completed in AWS lambda console
 DB_HOST = os.environ.get('DB_HOST')
 DB_PORT = os.environ.get('DB_PORT', '5432')
 DB_USER = os.environ.get('DB_USER')
@@ -114,13 +114,13 @@ def lambda_handler(kinesis_event, context):
     # Kinesis stream processor function. Reads records and updates PostgreSQL
     logger.info("psycopg2 loaded from: %s", psycopg2.__file__)
     records_processed = 0
-    failed_sequence_numbers = []  # For per-record retries
+    failed_sequence_numbers = []  # for per-record retries
     conn = None
     
     try:
         conn = get_db_connection()
 
-        # Batch Commit Logic:
+        # Batch commit logic:
         with conn.cursor() as cur:
 
             # process records from the Kinesis batch
@@ -131,7 +131,7 @@ def lambda_handler(kinesis_event, context):
                     payload = base64.b64decode(record['kinesis']['data']).decode('utf-8')
                     event_data = json.loads(payload)
 
-                    # Batch commit ---- pass cursor to processing function
+                    # Batch commit -> pass cursor to processing function
                     process_event(event_data, cur)
                     records_processed += 1
 
@@ -139,7 +139,7 @@ def lambda_handler(kinesis_event, context):
                     print(f"Error processing single record: {e} | Record: {record.get('kinesis', {}).get('data')}")
                     failed_sequence_numbers.append(sequence_number)
 
-            # Commit the entire batch at once ---
+            # Commit the entire batch at once
             conn.commit()
             logger.info(f"Batch commit successful. Processed: {records_processed}, Failed: {len(failed_sequence_numbers)}")
 

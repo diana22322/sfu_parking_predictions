@@ -21,7 +21,7 @@ STUDENT_COUNT = 20000       # Unique student ID's to simulate
 TODAY = date(2025, 11, 20)
 OFF_DAY_FRACTION = 0.12 # ~12% of activate students show up on the weekends too
 
-# List of stat holidays affecting campus activities/parking
+# List of stat holidays affecting parking
 STAT_HOLIDAYS = [
     '2022-02-21', '2022-04-15',
     '2022-10-10', '2022-11-11',
@@ -34,7 +34,7 @@ STAT_HOLIDAYS = [
 # Converting to a set for fast lookup
 HOLIDAYS_DT = {pd.to_datetime(d).date() for d in STAT_HOLIDAYS}
 
-# Dates for major, non-class events that affect parking (e.g. Convocation)
+# dates for special days that affect parking (e.g. Convocation)
 SPECIAL_DAYS = [
     '2022-06-07', '2022-06-10',
     '2022-10-06', '2022-10-07',
@@ -53,16 +53,15 @@ BURNABY_LOTS = {
 BURNABY_WEIGHTS = [0.35, 0.30, 0.15, 0.10, 0.10]
 
 SURREY_LOTS = {
-    'SRYC' : 450,  # Central City - Level P3
-    'SRYE' : 450   # Underground Parkade
+    'SRYC' : 450,  
+    'SRYE' : 450  
 }
-# Surrey lot preference (SRYC likely gets more traffic)
+# Surrey lot preference
 SURREY_WEIGHTS = [0.60, 0.40]
 
-# --- COMBINED LOT AND CAMPUS DATA STRUCTURE ---
 CAMPUS_LOTS = {
     'Burnaby': {'lots': BURNABY_LOTS, 'weights': BURNABY_WEIGHTS, 'max_students': int(STUDENT_COUNT * 0.90)},
-    'Surrey': {'lots': SURREY_LOTS, 'weights': SURREY_WEIGHTS, 'max_students': int(STUDENT_COUNT * 0.10)} # Assume ~10% of students primarily use Surrey
+    'Surrey': {'lots': SURREY_LOTS, 'weights': SURREY_WEIGHTS, 'max_students': int(STUDENT_COUNT * 0.10)} # assuming ~10% of students primarily use Surrey
 }
 
 # extract names for simpler access later
@@ -83,7 +82,7 @@ SEMESTERS = [
     {'name': 'Fall 2025', 'start': '2025-09-02', 'class_end': '2025-12-05', 'sem_end': '2025-12-19'},
 ]
 
-# ------------ Generating synthetic schedules for students -----------------------
+# Generating synthetic schedules for students 
 def generate_synthetic_schedule(start_date, end_date):
     """
         Generates a simplified, realistic course schedule template for the entire period
@@ -135,7 +134,7 @@ def generate_synthetic_schedule(start_date, end_date):
     # dataframe consisting of the weekly class schedule template
     schedule_df = pd.DataFrame(schedule_data)
 
-    # Create a date sequence (calendar) for the entire schedule to iterate over and create daily schedules from the above weekly template
+    # create a date sequence (calendar) for the entire schedule to iterate over and create daily schedules from the above weekly template
     date_range = pd.date_range(start=start_date, end=end_date, freq='D')
 
     # list to store dataframes consisting of daily schedules
@@ -153,10 +152,10 @@ def generate_synthetic_schedule(start_date, end_date):
             daily_schedule['date'] = date_item.date()
             all_sessions.append(daily_schedule)
 
-    # Concatenate all daily schedules to one larger df
+    # concatenate all daily schedules to one larger df
     return pd.concat(all_sessions, ignore_index=True)
 
-# ------------- Parking Event Simulation --------------------------
+# Parking event simulation
 def simulate_events(schedule_df, current_period, student_frac=1.0):
     """
     Create ARRIVAL and DEPARTURE events based on the schedule and period logic
@@ -168,12 +167,11 @@ def simulate_events(schedule_df, current_period, student_frac=1.0):
     is_exam_period = current_period == 'exam'
     is_off_day = current_period == 'off_day'
 
-    # Define the observed worst peak window for arrival (10:30 AM to 12:30 PM)
+    # define the observed worst peak window for arrival (10:30 AM to 12:30 PM from personal observation)
     PEAK_START = time(10, 30)
     PEAK_END = time(12, 30)
 
-    #*****************
-    # Reduce sample of students for low-demand periods (used for off_day). Only subset of students come to campus on weekends on holidays
+    # only subset of students come to campus on weekends on holidays
     if student_frac < 1.0:
         active_students = schedule_df['student_id'].unique()
         if len(active_students) > 0:

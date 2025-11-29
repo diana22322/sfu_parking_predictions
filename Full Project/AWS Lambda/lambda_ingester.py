@@ -8,8 +8,8 @@ import logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# --- CONFIGURATION (ENVIRONMENT VARIABLES) ---
-# This is read from the Lambda's environment variables
+# CONFIGURATION (ENVIRONMENT VARIABLES)
+# This is read from Lambda's environment variables
 KINESIS_STREAM_NAME = os.environ.get('KINESIS_STREAM_NAME', 'sfu-parking-stream')
 
 # Validation constants (must match PySpark ETL and Simulator)
@@ -65,7 +65,7 @@ def validate_event(event: dict) -> dict:
     return event
 
 
-# Global variable for Kinesis client (will be initialized on first run)
+# global variable for Kinesis client (will be initialized on first run)
 KINESIS_CLIENT = None
 
 def lambda_handler(api_event, context):
@@ -74,7 +74,7 @@ def lambda_handler(api_event, context):
     logger.info("RAW EVENT: %s", api_event)
     global KINESIS_CLIENT
 
-    # Initialize Boto3 Kinesis client inside the handler (or a wrapper)
+    # Initialize Boto3 Kinesis client inside the handler 
     # to ensure ENI is active before initialization.
     if KINESIS_CLIENT is None:
         try:
@@ -132,7 +132,7 @@ def lambda_handler(api_event, context):
         }
 
     except Exception as e:
-        # Handle unexpected errors e.g. Kinesis connection issues
+        # handle unexpected errors e.g. Kinesis connection issues
         print(f"Kinesis Error: {e}")
         return {
             'statusCode': 500,

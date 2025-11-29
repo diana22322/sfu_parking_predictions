@@ -47,7 +47,7 @@ LOT_OCCUPANCY = {
 # value: {'session_id': UUID, 'lot_id': 'NORTH', 'campus': 'BURNABY', 'plate_number': '...' }
 ACTIVE_SESSIONS = {}
 
-# Queue of pre-generated, scheduled events for the current day, sorted by time
+# Queue of pre-generated and scheduled events for the current day
 DAILY_SCHEDULE_QUEUE = []
 
 # map plate number for each student
@@ -352,7 +352,7 @@ def run_simulation():
         current_time = datetime.now()
         current_date = current_time.date()
         
-        # generate/Refresh Schedule at the start of a new day
+        # generate/refresh Schedule at the start of a new day
         if current_date != last_schedule_date:
             DAILY_SCHEDULE_QUEUE = get_daily_schedule()
             last_schedule_date = current_date
